@@ -14,7 +14,7 @@ var config = {
         {id: 'us-overview',
             alignment: 'middle',
             hidden: false,
-            title: 'Desert Ridge and Scottsdale Airpark: Two Corridors Reshaping North Phoenix ',
+            title: 'North Phoenix’s Loop 101 Corridor Transforms into a Growth Engine',
             subtitle: '',
             image: '',
             description: ` <h5>By Nicole Shih</h5>   
