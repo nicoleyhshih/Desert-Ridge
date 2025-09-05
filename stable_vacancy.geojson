@@ -1,0 +1,41 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Miami, FL",
+                "description": "Vacancy Rate: 19%. Increased demand from finance and tech firms relocating.",
+                "marker-color": "#008000"  
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-80.1918, 25.7617]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "San Bernardino/Riverside, CA",
+                "description": "Vacancy Rate: 18.6%. Growth in logistics and warehouse-driven demand.",
+                "marker-color": "#008000"  
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-117.2898, 34.1083]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Atlanta, GA",
+                "description": "Vacancy Rate: 18.1%. Strong job growth and a diversified economy.",
+                "marker-color": "#008000"  
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-84.388, 33.749]
+            }
+        }
+    ]
+}

@@ -1,0 +1,41 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "San Francisco, CA",
+                "description": "Vacancy Rate: 32.5%. High remote work adoption in the tech sector, leading to significant office space vacancies.",
+                "marker-color": "#FF0000"  
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-122.4194, 37.7749]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Austin, TX",
+                "description": "Vacancy Rate: 27.9%. Tech layoffs and overdevelopment have contributed to rising vacancies.",
+                "marker-color": "#FF0000"  
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-97.7431, 30.2672]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Portland, OR",
+                "description": "Vacancy Rate: 26.4%. Economic challenges and increased remote work trends.",
+                "marker-color": "#FF0000"  
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-122.675, 45.5051]
+            }
+        }
+    ]
+}

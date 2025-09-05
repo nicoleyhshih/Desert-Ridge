@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8' />
+  <title>Desert Ridge</title>
+  <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+  <link rel="icon" type="image/x-icon" href="https://raw.githubusercontent.com/mapbox/assembly/publisher-staging/src/svgs/mapbox.svg">
+  <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v2.11.0/mapbox-gl.js'></script>
+  <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v2.11.0/mapbox-gl.css' rel='stylesheet' />
+  <script src="https://unpkg.com/intersection-observer@0.12.0/intersection-observer.js"></script>
+  <script src="https://unpkg.com/scrollama"></script>
+  <style>
+    body { margin:0; padding:0; font-family: Georgia, "Times New Roman", serif; }
+    a, a:hover, a:visited { color: #0071bc; }
+
+    #map { top:0; height: 100vh; width:100vw; position: fixed; }
+    #mapInset {
+      bottom:50px; right:30px; height: 180px; width:250px; max-width:100%;
+      position: fixed; z-index: 1; opacity: 1; transition: opacity 0.5s ease-in-out; pointer-events: none;
+    }
+    #mapInset .mapboxgl-ctrl-bottom-left { display: none; }
+    @media (max-width: 500px) { #mapInset { display: none; } }
+
+    #header { margin:auto; width:100%; position:relative; z-index:5; }
+    #header h1, #header h2, #header p { margin:0; padding:2vh 2vw; text-align:center; }
+
+    #footer { width:100%; min-height:5vh; padding-top:2vh; padding-bottom:2vh; text-align:center; line-height:25px; font-size:13px; position:relative; z-index:5; }
+    #features { padding-top:10vh; padding-bottom:10vh; }
+
+    .hidden { visibility:hidden; }
+    .centered { width:50vw; margin:0 auto; }
+    .lefty { width:33vw; margin-left:5vw; }
+    .righty { width:33vw; margin-left:62vw; }
+    .fully { width:100%; margin:auto; }
+    .light { color:#ee4800; background-color:#fafafa; }
+    .dark { color:#191919; background-color:#fafafa; opacity:0.9; }
+
+    .step { padding-bottom:50vh; opacity:0.25; }
+    .step.active { opacity:0.9; }
+    .step div { padding:25px 50px; line-height:1.8; font-size:18px; }
+    .step img { width:100%; }
+    .step h3 {
+  font-size: 22px;
+  font-weight: bold;
+}
+
+
+    /* Popups */
+    .mapboxgl-popup { opacity: 1 !important; transition: none !important; max-width: 300px; font-family: "Helvetica Neue", Arial, sans-serif; }
+    .mapboxgl-popup-content { padding: 12px 16px; font-size: 14px; line-height: 1.4; background: #fff; border-radius: 1px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    .mapboxgl-popup-content h4, .mapboxgl-popup-content strong { margin:0 0 6px; font-size:15px; color:#25408f; }
+    .mapboxgl-popup-content p { margin:0; color:#444; }
+    .mapboxgl-popup-tip { display:none !important; }
+
+    /* Marker structure:
+       <div class="poi-marker (root - Mapbox positions this)">
+         <div class="poi-dot (inner - we style this)"></div>
+       </div>
+       IMPORTANT: never apply transform to the root. Only to .poi-dot. */
+    .poi-marker {
+      pointer-events: auto; /* root gets mapbox transform; don't touch it */
+    }
+    .poi-dot {
+      width: 20px;
+  height: 20px;
+  background-color: #e11d48; /* Tailwind's rose-600 (a nice red) */
+  border: 2px solid #fff;    /* white border ring */
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(0,0,0,0.25);
+  cursor: pointer;
+    }
+
+/* Hover effect */
+.poi-dot:hover {
+  transform: scale(1.4);
+  background-color: #be123c; /* slightly darker */
+  box-shadow: 0 0 10px rgba(0,0,0,0.4);
+}
+
+
+/* Special blue variant (for Mayo + Banner Health) */
+.poi-dot.blue {
+   width: 25px;   /* bigger than the default 14px */
+  height: 25px;
+  background-color: #2563eb;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(0,0,0,0.25);
+}
+
+/* Hover: grow a bit more */
+.poi-marker:hover .poi-dot.blue {
+  transform: scale(1.4);
+  background-color: #1e40af;
+}
+.hl { color: #2563eb; }
+
+    /* Circle highlight effect */
+    .poi-dot.circled {
+      box-shadow:
+        0 0 0 5px rgba(255, 59, 48, 0.95),
+        0 0 10px rgba(0,0,0,0.55),
+        0 0 18px rgba(255, 59, 48, 0.85);
+      border-radius: 50%;
+      z-index: 20;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="mapInset"></div>
+  <div id="story"></div>
+
+  <!-- Your config.js must define: accessToken, style, projection, inset, auto, showMarkers, chapters[] -->
+  <script src="./config.js"></script>
+
+  <script>
+  var initLoad = true;
+  var layerTypes = {
+    'fill': ['fill-opacity'],
+    'line': ['line-opacity'],
+    'circle': ['circle-opacity', 'circle-stroke-opacity'],
+    'symbol': ['icon-opacity', 'text-opacity'],
+    'raster': ['raster-opacity'],
+    'fill-extrusion': ['fill-extrusion-opacity'],
+    'heatmap': ['heatmap-opacity']
+  };
+  var alignments = { 'left':'lefty','center':'centered','right':'righty','full':'fully' };
+
+  function getLayerPaintType(layer) {
+    var layerType = map.getLayer(layer).type;
+    return layerTypes[layerType];
+  }
+  function setLayerOpacity(layer) {
+    var paintProps = getLayerPaintType(layer.layer);
+    paintProps.forEach(function(prop) {
+      var options = {};
+      if (layer.duration) {
+        var transitionProp = prop + "-transition";
+        options = { "duration": layer.duration };
+        map.setPaintProperty(layer.layer, transitionProp, options);
+      }
+      map.setPaintProperty(layer.layer, prop, layer.opacity, options);
+    });
+  }
+
+  var story = document.getElementById('story');
+  var features = document.createElement('div');
+  features.setAttribute('id', 'features');
+
+  var header = document.createElement('div');
+  if (config.title) { var titleText = document.createElement('h1'); titleText.innerText = config.title; header.appendChild(titleText); }
+  if (config.subtitle) { var subtitleText = document.createElement('h2'); subtitleText.innerText = config.subtitle; header.appendChild(subtitleText); }
+  if (config.byline) { var bylineText = document.createElement('p'); bylineText.innerText = config.byline; header.appendChild(bylineText); }
+  if (header.innerText.length > 0) { header.classList.add(config.theme); header.setAttribute('id','header'); story.appendChild(header); }
+
+  config.chapters.forEach((record, idx) => {
+    var container = document.createElement('div');
+    var chapter = document.createElement('div');
+
+   if (record.title) { 
+  var title = document.createElement('h3'); 
+  title.innerHTML = record.title;   // ← use innerHTML so <span style="color:..."> works
+  chapter.appendChild(title); 
+}
+
+    if (record.image) { var image = new Image(); image.src = record.image; chapter.appendChild(image); }
+    if (record.description) { var s = document.createElement('p'); s.innerHTML = record.description; chapter.appendChild(s); }
+
+    container.setAttribute('id', record.id);
+    container.classList.add('step');
+    if (idx === 0) container.classList.add('active');
+
+    chapter.classList.add(config.theme);
+    container.appendChild(chapter);
+    container.classList.add(alignments[record.alignment] || 'centered');
+    if (record.hidden) container.classList.add('hidden');
+    features.appendChild(container);
+  });
+
+  story.appendChild(features);
+
+  var footer = document.createElement('div');
+  if (config.footer) { var footerText = document.createElement('p'); footerText.innerHTML = config.footer; footer.appendChild(footerText); }
+  if (footer.innerText.length > 0) { footer.classList.add(config.theme); footer.setAttribute('id','footer'); story.appendChild(footer); }
+
+  mapboxgl.accessToken = config.accessToken;
+
+  const transformRequest = (url) => {
+    const hasQuery = url.indexOf("?") !== -1;
+    const suffix = hasQuery ? "&pluginName=scrollytellingV2" : "?pluginName=scrollytellingV2";
+    return { url: url + suffix };
+  };
+
+  var map = new mapboxgl.Map({
+    container: 'map',
+    style: config.style,
+    center: config.chapters[0].location.center,
+    zoom: config.chapters[0].location.zoom,
+    bearing: config.chapters[0].location.bearing,
+    pitch: config.chapters[0].location.pitch,
+    interactive: false,
+    transformRequest: transformRequest,
+    projection: config.projection
+  });
+
+  // inset map
+  if (config.inset) {
+    var insetMap = new mapboxgl.Map({
+      container: 'mapInset',
+      style: 'mapbox://styles/mapbox/dark-v10',
+      center: config.chapters[0].location.center,
+      zoom: 3,
+      hash: false,
+      interactive: false,
+      attributionControl: false
+    });
+  }
+
+  if (config.showMarkers) {
+    var marker = new mapboxgl.Marker({ color: config.markerColor });
+    marker.setLngLat(config.chapters[0].location.center).addTo(map);
+  }
+
+  // Keep references to INNER DOT elements by name (lowercase)
+  let dotsByKey = {};   // e.g., { 'mayo': HTMLElement, 'banner health': HTMLElement }
+
+  // Shared hover popup
+  const hoverPopup = new mapboxgl.Popup({
+    closeButton: false,
+    closeOnClick: false,
+    closeOnMove: true,
+    offset: 12
+  });
+  let hoverTimer = null;
+  function showHoverPopup(lngLat, html) {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      hoverPopup.setLngLat(lngLat).setHTML(html);
+      if (!hoverPopup.isOpen()) hoverPopup.addTo(map);
+    }, 60);
+  }
+  function hideHoverPopup() { clearTimeout(hoverTimer); if (hoverPopup.isOpen()) hoverPopup.remove(); }
+
+  map.on('load', () => {
+    
+
+
+// --- Focus circles (create once, toggle per chapter) ---
+map.addSource('focus-circles', {
+  type: 'geojson',
+  data: { type: 'FeatureCollection', features: [] }
+});
+
+// Fill (soft blue blob)
+map.addLayer({
+  id: 'focus-circles-fill',
+  type: 'circle',
+  source: 'focus-circles',
+  paint: {
+    // size scales with zoom; tweak numbers as you like
+    'circle-radius': ['interpolate', ['linear'], ['zoom'],
+      12, 80,   // at zoom 12 -> 80px
+      14, 140,  // at zoom 14 -> 140px
+      16, 220   // at zoom 16 -> 220px
+    ],
+    'circle-color': 'rgba(59, 130, 246, 0.18)', // blue w/ alpha
+    'circle-blur': 0.2
+  },
+  layout: { visibility: 'none' }
+});
+
+// Outline ring
+map.addLayer({
+  id: 'focus-circles-outline',
+  type: 'circle',
+  source: 'focus-circles',
+  paint: {
+    'circle-radius': ['interpolate', ['linear'], ['zoom'],
+      12, 80,
+      14, 140,
+      16, 220
+    ],
+    'circle-color': 'rgba(0,0,0,0)', // transparent fill on outline layer
+    'circle-stroke-color': '#3b82f6', // blue outline
+    'circle-stroke-width': 3
+  },
+  layout: { visibility: 'none' }
+});
+
+// Helpers to show/hide/update the circles
+function setFocusCircles(coordsArray) {
+  const fc = {
+    type: 'FeatureCollection',
+    features: (coordsArray || []).map(c => ({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Point', coordinates: c }
+    }))
+  };
+  map.getSource('focus-circles').setData(fc);
+  map.setLayoutProperty('focus-circles-fill', 'visibility', 'visible');
+  map.setLayoutProperty('focus-circles-outline', 'visibility', 'visible');
+}
+function hideFocusCircles() {
+  map.setLayoutProperty('focus-circles-fill', 'visibility', 'none');
+  map.setLayoutProperty('focus-circles-outline', 'visibility', 'none');
+}
+
+
+
+    if (config.use3dTerrain) {
+      map.addSource('mapbox-dem', {
+        'type': 'raster-dem',
+        'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+        'tileSize': 512,
+        'maxzoom': 14
+      });
+      map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+      map.addLayer({
+        'id': 'sky',
+        'type': 'sky',
+        'paint': {
+          'sky-type': 'atmosphere',
+          'sky-atmosphere-sun': [0.0, 0.0],
+          'sky-atmosphere-sun-intensity': 15
+        }
+      });
+    }
+
+    if (config.inset) map.on('move', getInsetBounds);
+
+    // Optional focus
+    map.flyTo({ center: [-111.965, 33.674], zoom: 15.5, pitch: 0, bearing: 0 });
+
+    // ---- GeoJSON ----
+    const sitesFC = {
+      "type": "FeatureCollection",
+      "features": [
+        { "type": "Feature", "properties": { "name": "Sprouts Corporate HQs", "desc": "Completing Q2 2026" },
+          "geometry": { "type": "Polygon", "coordinates": [[
+            [-111.96221286389077, 33.67412096001901],
+            [-111.96214484697303, 33.672635092311964],
+            [-111.96032539442032, 33.67269169726629],
+            [-111.96042741979727, 33.674163413004734],
+            [-111.96221286389077, 33.67412096001901]
+          ]]} },
+        { "type": "Feature", "properties": { "name": "AC Hotel by Marriott", "desc": "Delivering in early 2027" },
+          "geometry": { "type": "Polygon", "coordinates": [[
+            [-111.96222986812055, 33.67502661917112],
+            [-111.96221286389077, 33.67440397952868],
+            [-111.96035940287919, 33.674446432374694],
+            [-111.96035940287919, 33.67508322255131],
+            [-111.96222986812055, 33.67502661917112]
+          ]]} },
+        { "type": "Feature", "properties": { "name": "Republic Services", "desc": "Completing Q4 2025" },
+          "geometry": { "type": "Polygon", "coordinates": [[
+            [-111.96977188569741, 33.67372781357136],
+            [-111.97006598731089, 33.67310651309653],
+            [-111.9668421811621, 33.67185448486805],
+            [-111.9665480795486, 33.672635827930705],
+            [-111.96977188569741, 33.67372781357136]
+          ]]} },
+
+        { "type": "Feature", "properties": {"name":"Trace Line","desc":"Example line"},
+          "geometry": { "type": "LineString", "coordinates": [
+            [-111.90654113044617,33.6619780119872],
+            [-111.90802771231205,33.65884911257095],
+            [-111.90833528097372,33.655279183822955],
+            [-111.9159390617823,33.65677259833025],
+            [-111.91535809875606,33.65954601365448],
+            [-111.91572293699305,33.66191268268466],
+            [-111.90938360512793,33.66279444354677],
+            [-111.90779450037459,33.662495783621765],
+            [-111.9065129642833,33.66199801477579]
+          ]} },
+
+        { "type": "Feature", "properties": { "name": "New Azure Aprtments", "desc": "Estimated Delivery in Q4 2027" },
+          "geometry": { "type": "Point", "coordinates": [-111.96520199908622, 33.67437735017711] } },
+
+        { "type": "Feature", "properties": { "name": "Cavasson East", "desc": "18700 N Hayden Road" },
+          "geometry": { "type": "Point", "coordinates": [-111.90919129839082, 33.65605347993039] } },
+
+        { "type": "Feature", "properties": { "name": "Hilton Hotel", "desc": "" },
+          "geometry": { "type": "Point", "coordinates": [-111.90869501725943, 33.658382402589154] } },
+
+        { "type": "Feature", "properties": { "name": "Banner Health", "desc": "" },
+          "geometry": { "type": "Point", "coordinates": [-111.90678914510192, 33.65613285798989] } },
+
+        { "type": "Feature", "properties": { "name": "Axis Raintree", "desc": "" },
+          "geometry": { "type": "Point", "coordinates": [-111.89428796152342, 33.617995783187396] } },
+
+        { "type": "Feature", "properties": { "name": "Mack Innovation Park", "desc": "" },
+          "geometry": { "type": "Point", "coordinates": [-111.88906127197775, 33.64408980520355] } },
+
+        { "type": "Feature", "properties": { "name": "Mayo", "desc": "" },
+          "geometry": { "type": "Point", "coordinates": [-111.94957321268495, 33.66174827458897] } },
+
+        { "type": "Feature", "properties": {"name": "The Loop", "desc": "17799 N 85th St"},
+          "geometry": { "type": "Point", "coordinates": [ -111.89639994604005, 33.64853559679908 ] } },
+
+        { "type": "Feature", "properties": {"name": "Axon's campus", "desc": " "},
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+              [-111.90772501280922,33.65383719802263],
+              [-111.9076148874206,33.649757854377214],
+              [-111.90258582799805,33.64962034504343],
+              [-111.90175988758205,33.64968146033003],
+              [-111.90076875908274,33.649925921043035],
+              [-111.89964915096304,33.65036900431515],
+              [-111.89882320983929,33.65075097075491],
+              [-111.89847447944166,33.650934314076764],
+              [-111.89994281795899,33.6518815816832],
+              [-111.90170482417999,33.652599664695515],
+              [-111.90273266114215,33.65299689953268],
+              [-111.90410922850229,33.653271907192234],
+              [-111.90585288056594,33.65359274829083],
+              [-111.90772501280922,33.65383719802263]
+            ]]
+          }
+        },
+
+        { "type": "Feature", "properties": { "name": "Mortenson", "desc": "" },
+          "geometry": { "type": "Polygon", "coordinates": [[
+            [-111.92569556664311,33.65902997803397],
+            [-111.92555215338824,33.66974582626531],
+            [-111.93407636600512,33.669755811337936],
+            [-111.93389025869571,33.6647949617051],
+            [-111.93505452106405,33.66363219346202],
+            [-111.93524081539535,33.66305079909522],
+            [-111.9351498824249,33.66141578471746],
+            [-111.93501018914708,33.66098941043644],
+            [-111.93324055771974,33.660252940899284],
+            [-111.93058608562814,33.65978780403353],
+            [-111.92569556664311,33.65902997803397]
+          ]]} },
+
+        { "type": "Feature", "properties": { "name": "ASM", "desc": "" },
+          "geometry": { "type": "Point", "coordinates": [ -111.92394939770331, 33.656103694164514 ] } },
+
+{
+      "type": "Feature",
+      "properties": { "name": "LGE's warehouse", "desc": "7501 E Redfield Rd" },
+      "geometry": {
+        "coordinates": [
+          -111.9201396183087,
+          33.610817399406926
+        ],
+        "type": "Point"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {"name": "The Parque", "desc": ""},
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -111.92521331470705,
+              33.63290867974972
+            ],
+            [
+              -111.92521331470705,
+              33.62945502549688
+            ],
+            [
+              -111.92211565737337,
+              33.62945502549688
+            ],
+            [
+              -111.92211565737337,
+              33.63290867974972
+            ],
+            [
+              -111.92521331470705,
+              33.63290867974972
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      }
+    }
+
+
+
+      ]
+    };
+
+    // add source & layers
+    if (!map.getSource('sites')) map.addSource('sites', { type: 'geojson', data: sitesFC });
+    else map.getSource('sites').setData(sitesFC);
+
+    if (!map.getLayer('sites-fill')) {
+      map.addLayer({
+        id: 'sites-fill',
+        type: 'fill',
+        source: 'sites',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#25408f', 'fill-opacity': 0.35 }
+      });
+    }
+    if (!map.getLayer('sites-outline')) {
+      map.addLayer({
+        id: 'sites-outline',
+        type: 'line',
+        source: 'sites',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'line-color': '#ed1b34', 'line-width': 2 }
+      });
+    }
+    if (!map.getLayer('sites-lines')) {
+      map.addLayer({
+        id: 'sites-lines',
+        type: 'line',
+        source: 'sites',
+        filter: ['==', ['geometry-type'], 'LineString'],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#ed1b34', 'line-width': 3 }
+      });
+    }
+
+    // Create HTML markers for points (root + inner)
+    const pointFeatures = sitesFC.features.filter(f => f.geometry && f.geometry.type === 'Point');
+    pointFeatures.forEach(f => {
+
+
+      
+      const root = document.createElement('div');
+      root.className = 'poi-marker';
+
+      const dot = document.createElement('div');
+      dot.className = 'poi-dot';
+      root.appendChild(dot);
+
+      const key = (f.properties?.name || '').toLowerCase().trim();
+      dotsByKey[key] = dot;
+
+      const lngLat = f.geometry.coordinates;
+      const html = `<strong>${f.properties?.name || 'Site'}</strong><br>${f.properties?.desc || ''}`;
+
+      root.addEventListener('mouseenter', () => showHoverPopup(lngLat, html));
+      root.addEventListener('mouseleave', hideHoverPopup);
+
+      new mapboxgl.Marker(root).setLngLat(lngLat).addTo(map);
+
+
+// Mayo + Banner Health → blue variant
+if (key === 'mayo' || key === 'banner health') {
+  dot.classList.add('blue');
+}
+
+
+      
+    });
+
+    
+
+    // Polygon hover popups
+    map.on('mousemove', 'sites-fill', (e) => {
+      map.getCanvas().style.cursor = 'pointer';
+      const f = e.features[0];
+      const html = `<strong>${f.properties?.name || 'Site'}</strong><br>${f.properties?.desc || ''}`;
+      showHoverPopup(e.lngLat, html);
+    });
+    map.on('mouseleave', 'sites-fill', () => {
+      map.getCanvas().style.cursor = '';
+      hideHoverPopup();
+    });
+
+    // ===== Scrollama =====
+    var scroller = scrollama();
+
+    // Circle-highlight only Mayo + Banner Health inner dots
+    function setMayoBannerCircled(active) {
+      ['mayo', 'banner health'].forEach(k => {
+        const dot = dotsByKey[k];
+        if (dot) dot.classList.toggle('circled', !!active);
+      });
+    }
+
+    scroller
+      .setup({ step: '.step', offset: 0.5, progress: true })
+      .onStepEnter((response) => {
+        var current_chapter = config.chapters.findIndex(chap => chap.id === response.element.id);
+        var chapter = config.chapters[current_chapter];
+
+        response.element.classList.add('active');
+        map[chapter.mapAnimation || 'flyTo'](chapter.location);
+
+        if (config.inset) {
+          if (chapter.location.zoom < 5) insetMap.flyTo({center: chapter.location.center, zoom: 0});
+          else insetMap.flyTo({center: chapter.location.center, zoom: 3});
+        }
+        if (config.showMarkers) marker.setLngLat(chapter.location.center);
+        if (chapter.onChapterEnter.length > 0) chapter.onChapterEnter.forEach(setLayerOpacity);
+        if (chapter.callback) window[chapter.callback] && window[chapter.callback]();
+
+       
+
+// Show big circles ONLY in the "mayo" chapter
+  if (response.element.id === 'mayo') {
+    setFocusCircles([
+      // Mayo
+      [-111.94957321268495, 33.66174827458897],
+      // Banner Health
+      [-111.90678914510192, 33.65613285798989]
+    ]);
+  } else {
+    hideFocusCircles();
+  }
+
+
+        
+      })
+      .onStepExit((response) => {
+        var chapter = config.chapters.find(chap => chap.id === response.element.id);
+        response.element.classList.remove('active');
+        if (chapter.onChapterExit.length > 0) chapter.onChapterExit.forEach(setLayerOpacity);
+
+ // When leaving the "mayo" chapter, hide the circles
+  if (response.element.id === 'mayo') {
+    hideFocusCircles();
+  }
+
+      });
+
+    if (config.auto) {
+      document.querySelectorAll('[data-scrollama-index="0"]')[0].scrollIntoView();
+    }
+  });
+
+  // Inset helpers
+  function getInsetBounds() {
+    let bounds = map.getBounds();
+    let boundsJson = {
+      "type": "FeatureCollection",
+      "features": [{
+        "type": "Feature",
+        "properties": {},
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[
+            [bounds._sw.lng, bounds._sw.lat],
+            [bounds._ne.lng, bounds._sw.lat],
+            [bounds._ne.lng, bounds._ne.lat],
+            [bounds._sw.lng, bounds._ne.lat],
+            [bounds._sw.lng, bounds._sw.lat]
+          ]]
+        }
+      }]
+    };
+    if (initLoad) { addInsetLayer(boundsJson); initLoad = false; }
+    else { updateInsetLayer(boundsJson); }
+  }
+  function addInsetLayer(bounds) {
+    insetMap.addSource('boundsSource', { 'type': 'geojson', 'data': bounds });
+    insetMap.addLayer({ 'id': 'boundsLayer', 'type': 'fill', 'source': 'boundsSource', 'layout': {}, 'paint': { 'fill-color': '#fff', 'fill-opacity': 0.2 }});
+    insetMap.addLayer({ 'id': 'outlineLayer', 'type': 'line', 'source': 'boundsSource', 'layout': {}, 'paint': { 'line-color': '#000', 'line-width': 1 }});
+  }
+  function updateInsetLayer(bounds) { insetMap.getSource('boundsSource').setData(bounds); }
+
+  // Resize
+  window.addEventListener('resize', () => {
+    try { if (window.scroller && typeof window.scroller.resize === 'function') window.scroller.resize(); } catch(e){}
+  });
+  </script>
+</body>
+</html>
