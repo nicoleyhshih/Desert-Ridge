@@ -89,7 +89,7 @@ var config = {
 
          {
             id: 'cavasson',
-            alignment: 'right',
+            alignment: 'left',
             hidden: false,
             title: 'Cavasson: The Flight to Quality',
             image: '',
